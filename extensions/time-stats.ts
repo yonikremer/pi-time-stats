@@ -16,6 +16,7 @@ type CallRecord = {
   toolCallId: string;
   toolName: string;
   preview: string;
+  full: string;
   startedAt: number;
   ms?: number;
   isError?: boolean;
@@ -71,6 +72,7 @@ export function ensureHydrated(ctx?: ExtensionContext): void {
           toolCallId: String(d.toolCallId),
           toolName: String(d.toolName ?? "?"),
           preview: String(d.preview ?? ""),
+          full: String(d.full ?? d.preview ?? ""),
           startedAt: 0,
           ms: typeof d.ms === "number" ? d.ms : undefined,
           isError: !!d.isError,
@@ -225,6 +227,50 @@ export function truncateVis(s: string, max: number): string {
   return out + "\u2026";
 }
 
+export function fullOf(toolName: string, args: any): string {
+  try {
+    if (!args || typeof args !== "object") return "";
+    if (toolName === "bash" || toolName === "powershell")
+      return String((args as any).command ?? (args as any).cmd ?? "")
+        .replace(/\s+/g, " ")
+        .slice(0, 2000);
+    return JSON.stringify(args).replace(/\s+/g, " ").slice(0, 2000);
+  } catch {
+    return "";
+  }
+}
+
+export function wrapVis(s: string, max: number): string[] {
+  const lines: string[] = [];
+  let cur = "";
+  const push = () => {
+    if (cur) lines.push(cur);
+    cur = "";
+  };
+  for (const w of s.split(" ")) {
+    if (!w) continue;
+    if (visibleWidth(w) > max) {
+      push();
+      let chunk = "";
+      for (const ch of w) {
+        if (visibleWidth(chunk + ch) > max) {
+          lines.push(chunk);
+          chunk = "";
+        }
+        chunk += ch;
+      }
+      if (chunk) lines.push(chunk);
+    } else if (!cur) cur = w;
+    else if (visibleWidth(cur + " " + w) <= max) cur += " " + w;
+    else {
+      push();
+      cur = w;
+    }
+  }
+  push();
+  return lines.length ? lines : [""];
+}
+
 export function rowLabel(r: CallRecord): string {
   return r.preview ? `${r.toolName} "${r.preview}"` : r.toolName;
 }
@@ -247,10 +293,11 @@ export function formatTable(rows: CallRecord[], maxWidth = 120): string {
 
 export function detailLines(r: CallRecord, maxWidth: number): string[] {
   const out = r.outChars != null ? ` ~${fmtTokens(r.outChars)} out` : "";
-  return [
-    `full: ${rowLabel(r)}`,
-    `took: ${fmtMs(r.ms ?? 0)} (${Math.round(r.ms ?? 0)}ms)${out}  ${r.isError ? "error" : "ok"}`,
-  ].map((l) => "    " + truncateVis(l, Math.max(10, maxWidth - 4)));
+  const inner = Math.max(10, maxWidth - 6);
+  const lines = ["    full:"];
+  for (const l of wrapVis(r.full || rowLabel(r), inner)) lines.push("      " + l);
+  lines.push("    " + truncateVis(`took: ${fmtMs(r.ms ?? 0)} (${Math.round(r.ms ?? 0)}ms)${out}  ${r.isError ? "error" : "ok"}`, Math.max(10, maxWidth - 4)));
+  return lines;
 }
 
 export class StatsOverlay implements Component {
@@ -307,6 +354,7 @@ export default function (pi: ExtensionAPI) {
       toolCallId: event.toolCallId,
       toolName: event.toolName,
       preview: previewOf(event.toolName, (event as any).args),
+      full: fullOf(event.toolName, (event as any).args),
       startedAt: performance.now(),
       nested,
     };
@@ -332,6 +380,7 @@ export default function (pi: ExtensionAPI) {
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         preview: "",
+        full: "",
         startedAt: performance.now() - ms,
         ms: Math.max(0, ms),
         isError: event.isError,
@@ -350,6 +399,7 @@ export default function (pi: ExtensionAPI) {
         toolCallId: done.toolCallId,
         toolName: done.toolName,
         preview: done.preview,
+        full: done.full,
         ms: done.ms,
         isError: !!done.isError,
         outChars: done.outChars,
