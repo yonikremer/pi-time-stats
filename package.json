@@ -1,6 +1,6 @@
 {
   "name": "pi-time-stats",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Per-call time + token stats for Pi TUI: /timestats slowest-call table plus live widget",
   "keywords": ["pi-package"],
   "license": "MIT",
