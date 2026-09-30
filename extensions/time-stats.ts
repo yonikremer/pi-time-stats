@@ -34,6 +34,70 @@ let assistantTokens = 0;
 let toolTokens = 0;
 let nestedCount = 0;
 
+const CALL_TYPE = "time-stats-call";
+const USAGE_TYPE = "time-stats-usage";
+let hydratedFor: string | undefined;
+let saver: ((customType: string, data?: unknown) => void) | undefined;
+
+function save(customType: string, data: unknown): void {
+  try {
+    saver?.(customType, data);
+  } catch {
+    /* never break tool flow */
+  }
+}
+
+function sessionFileOf(ctx?: ExtensionContext): string | undefined {
+  try {
+    return (ctx?.sessionManager as any)?.getSessionFile?.();
+  } catch {
+    return undefined;
+  }
+}
+
+export function ensureHydrated(ctx?: ExtensionContext): void {
+  const f = sessionFileOf(ctx);
+  if (f != null && hydratedFor === f) return;
+  reset(ctx);
+  hydratedFor = f;
+  try {
+    const entries = (ctx?.sessionManager as any)?.getEntries?.() ?? [];
+    for (const e of entries) {
+      if (!e || e.type !== "custom" || !e.data) continue;
+      if (e.customType === CALL_TYPE) {
+        const d = e.data as any;
+        if (d.toolCallId == null) continue;
+        const rec: CallRecord = {
+          toolCallId: String(d.toolCallId),
+          toolName: String(d.toolName ?? "?"),
+          preview: String(d.preview ?? ""),
+          startedAt: 0,
+          ms: typeof d.ms === "number" ? d.ms : undefined,
+          isError: !!d.isError,
+          outChars: typeof d.outChars === "number" ? d.outChars : undefined,
+          nested: !!d.nested,
+        };
+        if (calls.has(rec.toolCallId)) Object.assign(calls.get(rec.toolCallId)!, rec);
+        else {
+          push(rec);
+          if (rec.nested) nestedCount++;
+        }
+        if (rec.ms != null && !rec.nested) {
+          sessionToolsMs += rec.ms;
+          lastCall = rec;
+        }
+      } else if (e.customType === USAGE_TYPE) {
+        const d = e.data as any;
+        if (typeof d?.assistant === "number") assistantTokens += d.assistant;
+        if (typeof d?.tools === "number") toolTokens += d.tools;
+      }
+    }
+  } catch {
+    /* entries unreadable: stay empty */
+  }
+  if (ctx) refreshWidget(ctx);
+}
+
 function reset(ctx?: ExtensionContext) {
   calls.clear();
   order.length = 0;
@@ -228,13 +292,16 @@ export class StatsOverlay implements Component {
 }
 
 export default function (pi: ExtensionAPI) {
+  saver = (t, d) => pi.appendEntry(t, d);
   pi.on("session_start", (_event, ctx) => {
     lastCtx = ctx;
-    reset(ctx);
+    hydratedFor = undefined;
+    ensureHydrated(ctx);
   });
 
   pi.on("tool_execution_start", (event, ctx) => {
     lastCtx = ctx;
+    ensureHydrated(ctx);
     const nested = event.toolCallId.includes("/");
     const rec: CallRecord = {
       toolCallId: event.toolCallId,
@@ -248,6 +315,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_execution_end", (event, ctx) => {
+    ensureHydrated(ctx);
     const rec = calls.get(event.toolCallId);
     const ms = rec ? performance.now() - rec.startedAt : 0;
     const out = outCharsOf((event as any).result);
@@ -276,11 +344,24 @@ export default function (pi: ExtensionAPI) {
         sessionToolsMs += fallback.ms ?? 0;
       }
     }
+    const done = calls.get(event.toolCallId);
+    if (done?.ms != null) {
+      save(CALL_TYPE, {
+        toolCallId: done.toolCallId,
+        toolName: done.toolName,
+        preview: done.preview,
+        ms: done.ms,
+        isError: !!done.isError,
+        outChars: done.outChars,
+        nested: done.nested,
+      });
+    }
     refreshWidget(ctx);
   });
 
   // Tool-result tokens + accurate output chars (assistant usage handled below).
-  pi.on("tool_result", (event) => {
+  pi.on("tool_result", (event, ctx) => {
+    ensureHydrated(ctx);
     const rec = calls.get(event.toolCallId);
     try {
       const chars = Array.isArray(event.content)
@@ -290,7 +371,10 @@ export default function (pi: ExtensionAPI) {
         : 0;
       if (rec && chars) rec.outChars = chars;
       const u = (event as any).usage;
-      if (u && typeof u.totalTokens === "number") toolTokens += u.totalTokens;
+      if (u && typeof u.totalTokens === "number") {
+        toolTokens += u.totalTokens;
+        save(USAGE_TYPE, { tools: u.totalTokens });
+      }
     } catch {
       /* never break tool flow */
     }
@@ -298,20 +382,29 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("message_end", (event, ctx) => {
     lastCtx = ctx;
+    ensureHydrated(ctx);
     try {
       const m = event.message as any;
       if (m?.role === "assistant" && m?.usage) {
         const u = m.usage;
-        if (typeof u.totalTokens === "number") assistantTokens += u.totalTokens;
-        else if (typeof u.input === "number" || typeof u.output === "number")
-          assistantTokens += (u.input ?? 0) + (u.output ?? 0);
+        if (typeof u.totalTokens === "number") {
+          assistantTokens += u.totalTokens;
+          save(USAGE_TYPE, { assistant: u.totalTokens });
+        } else if (typeof u.input === "number" || typeof u.output === "number") {
+          const sum = (u.input ?? 0) + (u.output ?? 0);
+          assistantTokens += sum;
+          save(USAGE_TYPE, { assistant: sum });
+        }
       }
     } catch {
       /* ignore malformed messages */
     }
   });
 
-  const rollup = (_e: unknown, ctx: ExtensionContext) => refreshWidget(ctx);
+  const rollup = (_e: unknown, ctx: ExtensionContext) => {
+    ensureHydrated(ctx);
+    refreshWidget(ctx);
+  };
   pi.on("turn_end", rollup as any);
   pi.on("agent_settled", rollup as any);
 
@@ -319,6 +412,7 @@ export default function (pi: ExtensionAPI) {
     description: "Slowest tool calls this session (usage: /timestats [n])",
     handler: async (args, ctx) => {
       const n = parseInt(args.trim(), 10);
+      ensureHydrated(ctx);
       const rows = topRows(Number.isInteger(n) && n > 0 ? n : 10);
       if (ctx.mode === "tui" && ctx.hasUI) {
         try {

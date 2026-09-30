@@ -16,6 +16,8 @@ pi install git:github.com/YOURNAME/pi-time-stats@v0.1.0
 - In the overlay: `↑↓` move, `Enter` expands a row to full multiline detail, `q` closes.
 - Live widget above the editor: `last: bash 3.2s | session tools 84s | tokens ~152k`.
 
+Stats persist as session custom entries, so `/reload` keeps history.
+
 ## Notes
 
 - Time measured with `performance.now()` between `tool_execution_start` / `tool_execution_end`.
