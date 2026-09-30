@@ -12,7 +12,8 @@ pi install git:github.com/YOURNAME/pi-time-stats@v0.1.0
 
 ## Use
 
-- `/timestats [n]` — slowest tool calls this session (default 10). Nested calls excluded with a count.
+- `/timestats [n]` — slowest tool calls this session (default 10). Time on the left, tool call gets the rest of the line. Nested calls excluded with a count.
+- In the overlay: `↑↓` move, `Enter` expands a row to full multiline detail, `q` closes.
 - Live widget above the editor: `last: bash 3.2s | session tools 84s | tokens ~152k`.
 
 ## Notes

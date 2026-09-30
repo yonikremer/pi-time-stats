@@ -9,6 +9,8 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 
 type CallRecord = {
   toolCallId: string;
@@ -138,21 +140,91 @@ function refreshWidget(ctx: ExtensionContext) {
   }
 }
 
-function table(n: number): string {
-  const rows = [...calls.values()]
+export function topRows(n: number): CallRecord[] {
+  return [...calls.values()]
     .filter((r) => r.ms != null && !r.nested)
     .sort((a, b) => (b.ms ?? 0) - (a.ms ?? 0))
     .slice(0, Math.max(1, n));
+}
+
+export function timeColWidth(rows: CallRecord[]): number {
+  return Math.max(4, ...rows.map((r) => fmtMs(r.ms ?? 0).length));
+}
+
+export function truncateVis(s: string, max: number): string {
+  if (visibleWidth(s) <= max) return s;
+  let out = "";
+  for (const ch of s) {
+    if (visibleWidth(out + ch + "\u2026") > max) break;
+    out += ch;
+  }
+  return out + "\u2026";
+}
+
+export function rowLabel(r: CallRecord): string {
+  return r.preview ? `${r.toolName} "${r.preview}"` : r.toolName;
+}
+
+export function formatRow(r: CallRecord, timeW: number, maxWidth: number): string {
+  const t = fmtMs(r.ms ?? 0).padEnd(timeW);
+  const flag = r.isError ? " [error]" : "";
+  const label = truncateVis(rowLabel(r) + flag, Math.max(10, maxWidth - timeW - 2));
+  return `${t}  ${label}`;
+}
+
+export function formatTable(rows: CallRecord[], maxWidth = 120): string {
   if (!rows.length) return "No tool calls recorded yet.";
-  const lines = rows.map((r) => {
-    const what = r.preview ? `${r.toolName} "${r.preview}"` : r.toolName;
-    const out =
-      r.outChars != null ? ` ~${fmtTokens(r.outChars)} out` : "";
-    return `${what}  ${fmtMs(r.ms ?? 0)}${out}  ${r.isError ? "error" : "ok"}`;
-  });
+  const timeW = timeColWidth(rows);
+  const lines = rows.map((r) => formatRow(r, timeW, maxWidth));
   const extra = nestedCount ? `\n(+${nestedCount} nested excluded)` : "";
   return `Slowest ${rows.length} tool call(s), one row per call:\n` +
     lines.join("\n") + extra;
+}
+
+export function detailLines(r: CallRecord, maxWidth: number): string[] {
+  const out = r.outChars != null ? ` ~${fmtTokens(r.outChars)} out` : "";
+  return [
+    `full: ${rowLabel(r)}`,
+    `took: ${fmtMs(r.ms ?? 0)} (${Math.round(r.ms ?? 0)}ms)${out}  ${r.isError ? "error" : "ok"}`,
+  ].map((l) => "    " + truncateVis(l, Math.max(10, maxWidth - 4)));
+}
+
+export class StatsOverlay implements Component {
+  private selected = 0;
+  private expanded = new Set<number>();
+  constructor(
+    private rows: CallRecord[],
+    private done: (result: undefined) => void,
+  ) {}
+  handleInput(data: string): void {
+    if (matchesKey(data, "escape") || data === "q") {
+      this.done(undefined);
+      return;
+    }
+    if (matchesKey(data, "up")) {
+      this.selected = Math.max(0, this.selected - 1);
+    } else if (matchesKey(data, "down")) {
+      this.selected = Math.min(this.rows.length - 1, this.selected + 1);
+    } else if (matchesKey(data, "return") || data === " ") {
+      if (this.expanded.has(this.selected)) this.expanded.delete(this.selected);
+      else this.expanded.add(this.selected);
+    }
+  }
+  invalidate(): void {}
+  render(width: number): string[] {
+    const w = Math.max(20, width);
+    const lines = [`Slowest ${this.rows.length} tool call(s):`];
+    if (!this.rows.length) lines.push("No tool calls recorded yet.");
+    const timeW = timeColWidth(this.rows);
+    this.rows.forEach((r, i) => {
+      const mark = i === this.selected ? "\u203a" : " ";
+      lines.push(mark + " " + truncateVis(formatRow(r, timeW, w - 2), w - 2));
+      if (this.expanded.has(i)) lines.push(...detailLines(r, w));
+    });
+    if (nestedCount) lines.push(`(+${nestedCount} nested excluded)`);
+    lines.push("\u2191\u2193 move \u00b7 Enter expand \u00b7 q close");
+    return lines;
+  }
 }
 
 export default function (pi: ExtensionAPI) {
@@ -247,7 +319,19 @@ export default function (pi: ExtensionAPI) {
     description: "Slowest tool calls this session (usage: /timestats [n])",
     handler: async (args, ctx) => {
       const n = parseInt(args.trim(), 10);
-      const out = table(Number.isInteger(n) && n > 0 ? n : 10);
+      const rows = topRows(Number.isInteger(n) && n > 0 ? n : 10);
+      if (ctx.mode === "tui" && ctx.hasUI) {
+        try {
+          await ctx.ui.custom(
+            (_tui, _theme, _kb, done) => new StatsOverlay(rows, done),
+            { overlay: true },
+          );
+          return;
+        } catch {
+          /* fall through to text fallback */
+        }
+      }
+      const out = formatTable(rows);
       if (ctx.mode === "tui" && ctx.hasUI) {
         try {
           await ctx.ui.editor("Time stats", out);

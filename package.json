@@ -1,13 +1,12 @@
 {
   "name": "pi-time-stats",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Per-call time + token stats for Pi TUI: /timestats slowest-call table plus live widget",
-  "keywords": [
-    "pi-package"
-  ],
+  "keywords": ["pi-package"],
   "license": "MIT",
   "type": "module",
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   }
 }
