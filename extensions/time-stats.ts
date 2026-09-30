@@ -35,7 +35,7 @@ let assistantTokens = 0;
 let toolTokens = 0;
 let nestedCount = 0;
 
-const VERSION = "0.2.4";
+const VERSION = "0.2.5";
 const CALL_TYPE = "time-stats-call";
 const USAGE_TYPE = "time-stats-usage";
 let hydratedFor: string | undefined;
@@ -309,10 +309,19 @@ export function detailLines(r: CallRecord, maxWidth: number): string[] {
 export class StatsOverlay implements Component {
   private selected = 0;
   private expanded = new Set<number>();
+  private scroll = 0;
+  static maxLines = 24;
   constructor(
     private rows: CallRecord[],
     private done: (result: undefined) => void,
   ) {}
+  private rowStart: number[] = [];
+  private ensureVisible(idx: number): void {
+    const max = StatsOverlay.maxLines;
+    const start = this.rowStart[idx] ?? 0;
+    if (start < this.scroll) this.scroll = start;
+    else if (start >= this.scroll + max) this.scroll = start - max + 1;
+  }
   handleInput(data: string): void {
     if (matchesKey(data, "escape") || data === "q") {
       this.done(undefined);
@@ -320,27 +329,41 @@ export class StatsOverlay implements Component {
     }
     if (matchesKey(data, "up")) {
       this.selected = Math.max(0, this.selected - 1);
+      this.ensureVisible(this.selected);
     } else if (matchesKey(data, "down")) {
       this.selected = Math.min(this.rows.length - 1, this.selected + 1);
+      this.ensureVisible(this.selected);
+    } else if (matchesKey(data, "pageup")) {
+      this.scroll = Math.max(0, this.scroll - 12);
+    } else if (matchesKey(data, "pagedown")) {
+      this.scroll = this.scroll + 12;
     } else if (matchesKey(data, "return") || data === " ") {
       if (this.expanded.has(this.selected)) this.expanded.delete(this.selected);
       else this.expanded.add(this.selected);
+      this.ensureVisible(this.selected);
     }
   }
   invalidate(): void {}
   render(width: number): string[] {
     const w = Math.max(20, width);
+    const max = StatsOverlay.maxLines;
     const lines = [`Slowest ${this.rows.length} tool call(s) [v${VERSION}]:`];
     if (!this.rows.length) lines.push("No tool calls recorded yet.");
     const timeW = timeColWidth(this.rows);
+    this.rowStart = [];
     this.rows.forEach((r, i) => {
+      this.rowStart.push(lines.length);
       const mark = i === this.selected ? "\u203a" : " ";
       lines.push(mark + " " + truncateVis(formatRow(r, timeW, w - 2), w - 2));
       if (this.expanded.has(i)) lines.push(...detailLines(r, w));
     });
     if (nestedCount) lines.push(`(+${nestedCount} nested excluded)`);
-    lines.push("\u2191\u2193 move \u00b7 Enter expand \u00b7 q close");
-    return lines;
+    this.scroll = Math.max(0, Math.min(this.scroll, Math.max(0, lines.length - 1)));
+    const out = lines.slice(this.scroll, this.scroll + max);
+    if (this.scroll > 0) out.unshift("\u2026more above");
+    if (this.scroll + max < lines.length) out.push("\u2026more below (PgDn)");
+    out.push(`\u2191\u2193 move \u00b7 Enter expand \u00b7 PgUp/PgDn scroll \u00b7 q close \u00b7 ${Math.min(this.selected + 1, this.rows.length)}/${this.rows.length} \u00b7 v${VERSION}`);
+    return out;
   }
 }
 
