@@ -35,7 +35,7 @@ let assistantTokens = 0;
 let toolTokens = 0;
 let nestedCount = 0;
 
-const VERSION = "0.2.3";
+const VERSION = "0.2.4";
 const CALL_TYPE = "time-stats-call";
 const USAGE_TYPE = "time-stats-usage";
 let hydratedFor: string | undefined;
@@ -232,10 +232,8 @@ export function fullOf(toolName: string, args: any): string {
   try {
     if (!args || typeof args !== "object") return "";
     if (toolName === "bash" || toolName === "powershell")
-      return String((args as any).command ?? (args as any).cmd ?? "")
-        .replace(/\s+/g, " ")
-        .slice(0, 2000);
-    return JSON.stringify(args).replace(/\s+/g, " ").slice(0, 2000);
+      return String((args as any).command ?? (args as any).cmd ?? "").slice(0, 4000);
+    return JSON.stringify(args, null, 2)?.slice(0, 4000) ?? "";
   } catch {
     return "";
   }
@@ -248,7 +246,8 @@ export function wrapVis(s: string, max: number): string[] {
     if (cur) lines.push(cur);
     cur = "";
   };
-  for (const w of s.split(" ")) {
+  const wrapOne = (line: string) => {
+    for (const w of line.split(" ")) {
     if (!w) continue;
     if (visibleWidth(w) > max) {
       push();
@@ -263,12 +262,18 @@ export function wrapVis(s: string, max: number): string[] {
       if (chunk) lines.push(chunk);
     } else if (!cur) cur = w;
     else if (visibleWidth(cur + " " + w) <= max) cur += " " + w;
-    else {
-      push();
-      cur = w;
+      else {
+        push();
+        cur = w;
+      }
     }
+  };
+  for (const line of s.split("\n")) {
+    if (!line.trim()) continue;
+    cur = "";
+    wrapOne(line);
+    push();
   }
-  push();
   return lines.length ? lines : [""];
 }
 
