@@ -35,6 +35,7 @@ let assistantTokens = 0;
 let toolTokens = 0;
 let nestedCount = 0;
 
+const VERSION = "0.2.3";
 const CALL_TYPE = "time-stats-call";
 const USAGE_TYPE = "time-stats-usage";
 let hydratedFor: string | undefined;
@@ -287,7 +288,7 @@ export function formatTable(rows: CallRecord[], maxWidth = 120): string {
   const timeW = timeColWidth(rows);
   const lines = rows.map((r) => formatRow(r, timeW, maxWidth));
   const extra = nestedCount ? `\n(+${nestedCount} nested excluded)` : "";
-  return `Slowest ${rows.length} tool call(s), one row per call:\n` +
+  return `Slowest ${rows.length} tool call(s) [time-stats v${VERSION}]:\n` +
     lines.join("\n") + extra;
 }
 
@@ -324,7 +325,7 @@ export class StatsOverlay implements Component {
   invalidate(): void {}
   render(width: number): string[] {
     const w = Math.max(20, width);
-    const lines = [`Slowest ${this.rows.length} tool call(s):`];
+    const lines = [`Slowest ${this.rows.length} tool call(s) [v${VERSION}]:`];
     if (!this.rows.length) lines.push("No tool calls recorded yet.");
     const timeW = timeColWidth(this.rows);
     this.rows.forEach((r, i) => {
