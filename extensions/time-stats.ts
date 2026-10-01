@@ -35,7 +35,7 @@ let assistantTokens = 0;
 let toolTokens = 0;
 let nestedCount = 0;
 
-const VERSION = "0.2.5";
+const VERSION = "0.2.6";
 const CALL_TYPE = "time-stats-call";
 const USAGE_TYPE = "time-stats-usage";
 let hydratedFor: string | undefined;
@@ -301,6 +301,7 @@ export function detailLines(r: CallRecord, maxWidth: number): string[] {
   const out = r.outChars != null ? ` ~${fmtTokens(r.outChars)} out` : "";
   const inner = Math.max(10, maxWidth - 6);
   const lines = ["    full:"];
+  if (!r.full) lines.push("      (full call was not recorded for this row - run it again to capture)");
   for (const l of wrapVis(r.full || rowLabel(r), inner)) lines.push("      " + l);
   lines.push("    " + truncateVis(`took: ${fmtMs(r.ms ?? 0)} (${Math.round(r.ms ?? 0)}ms)${out}  ${r.isError ? "error" : "ok"}`, Math.max(10, maxWidth - 4)));
   return lines;
